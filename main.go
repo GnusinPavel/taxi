@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/GnusinPavel/taxi/bids"
@@ -34,20 +38,39 @@ func main() {
 	})
 
 	ticker := time.NewTicker(time.Millisecond * 200)
+	defer ticker.Stop()
 	go func() {
 		for range ticker.C {
 			bids.CreateNewBid()
 		}
 	}()
 
-	done := make(chan struct{})
+	runServer(mux)
+}
+
+func runServer(mux *http.ServeMux) {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGKILL)
+	server := http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+	}
 	go func() {
 		if err := http.ListenAndServe(":8080", mux); err != nil {
-			log.Printf("не смог запустить сервер: %s", err)
+			log.Printf("Error to start the server: %s", err)
 		}
-		done <- struct{}{}
 	}()
-	log.Println("Сервер запущен ...")
-	<-done
-	ticker.Stop()
+	log.Println("The server started ...")
+
+	<-stop
+	log.Println("Shutting down the server...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := server.Shutdown(ctx)
+	if err != nil {
+		log.Println("Error when shutting down the server:", err)
+	} else {
+		log.Println("Server gracefully stopped")
+	}
 }
